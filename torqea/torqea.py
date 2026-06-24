@@ -78,6 +78,43 @@ MODE_MIT              = 6      # channel-family MIT (streamed)
 MODE_MIT_OBJECT       = 0x0B   # object-family MIT (0x3001-0x3006)
 MODE_CSP              = 8
 
+# ---------------------------------------------------------------------------
+# Vendor objects — communication & configuration (confirmed V1.0 protocol)
+# ---------------------------------------------------------------------------
+OD_NODE_ID            = 0x2530   # Node-ID setting (save + reset required)
+OD_CANFD_BAUD         = 0x2540   # CANFD data-segment bitrate (1=5M 2=4M 3=2M 4=1M)
+OD_ZERO_CALIB         = 0x2531   # Zero calibration: sub1=set zero, sub2=reset
+OD_WATCHDOG_OFF       = 0x2650   # Write 0x01 to disable 500 ms watchdog + soft limits
+OD_FLASH_SAVE_PID     = 0x2539   # Write 0x01 to save PID + current limit to flash
+# PID gains (vendor, all sub 0, unit TBD — write then save via OD_FLASH_SAVE_PID)
+OD_CUR_KP             = 0x2532
+OD_CUR_KI             = 0x2533
+OD_VEL_KP             = 0x2534
+OD_VEL_KI             = 0x2535
+OD_POS_KP             = 0x2536
+OD_POS_KI             = 0x2537
+OD_MAX_CURRENT_CFG    = 0x2538   # max output current config (mA)
+# Temperature readback (vendor)
+OD_TEMP_MOS           = 0x2662   # MOS temperature, unit 0.1°C
+OD_TEMP_MOTOR         = 0x2663   # Motor coil temperature, unit 0.1°C
+
+# Fault code bit-mask (from 0x603F, confirmed V1.0 protocol §4.3)
+FAULT_CODES = {
+    0x0001: "Over-voltage",
+    0x0002: "Under-voltage",
+    0x0004: "Over-temperature",
+    0x0008: "Motor stall / locked rotor",
+    0x0010: "Overload",
+    0x0020: "Current sampling error",
+    0x0040: "Positive software limit reached",
+    0x0080: "Negative software limit reached",
+    0x0100: "Encoder communication timeout",
+    0x0200: "Motor over-speed",
+    0x0400: "Electrical angle init failed (power-on)",
+    0x1000: "Position following error too large",
+    0x2000: "Encoder fault",
+}
+
 # Object-family MIT objects (vendor extension)
 OD_MIT_FF_CURRENT     = 0x3001   # feed-forward torque current, 0.001 A
 OD_MIT_TARGET_POS     = 0x3002   # target position, pulse
@@ -110,8 +147,8 @@ MAGIC_LOAD = 0x64616F6C  # "load"
 #       construction time if your model uses a different ratio (see the model
 #       datasheet or the CANopen Protocol Manual §8 for exact values).
 # ---------------------------------------------------------------------------
-COUNTS_PER_REV_DEFAULT = 524288   # 2^19
-GEAR_RATIO_DEFAULT     = 101.0
+COUNTS_PER_REV_DEFAULT = 65536    # 16-bit output-shaft encoder (65536 cnt/rev)
+GEAR_RATIO_DEFAULT     = 1.0      # 0x6064 already reflects output shaft; no further ratio needed
 
 
 class TorqeaError(Exception):
@@ -304,6 +341,22 @@ class TorqeaActuator:
 
     def is_fault(self):
         return bool(self.get_statusword() & 0x0008)
+
+    def decode_fault(self, fault_code=None):
+        """Return list of active fault strings from 0x603F bit-mask.
+        If fault_code is None, reads 0x603F automatically."""
+        if fault_code is None:
+            fault_code = self.sdo_read(OD_ERROR_REGISTER + 0x3F - 0x01, 0, signed=False)
+            # 0x603F
+            fault_code = self.sdo_read(0x603F, 0, signed=False)
+        return [msg for bit, msg in FAULT_CODES.items() if fault_code & bit]
+
+    def get_temperature(self, sensor="mos"):
+        """Read MOS or motor coil temperature in degrees Celsius.
+        sensor: 'mos' | 'motor'"""
+        idx = OD_TEMP_MOS if sensor == "mos" else OD_TEMP_MOTOR
+        raw = self.sdo_read(idx, 0)
+        return raw / 10.0  # unit is 0.1°C
 
     def get_device_name(self):
         """Read the device name string object (0x1008)."""
