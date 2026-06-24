@@ -346,8 +346,6 @@ class TorqeaActuator:
         """Return list of active fault strings from 0x603F bit-mask.
         If fault_code is None, reads 0x603F automatically."""
         if fault_code is None:
-            fault_code = self.sdo_read(OD_ERROR_REGISTER + 0x3F - 0x01, 0, signed=False)
-            # 0x603F
             fault_code = self.sdo_read(0x603F, 0, signed=False)
         return [msg for bit, msg in FAULT_CODES.items() if fault_code & bit]
 
